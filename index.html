@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dayanarie Abundante</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">Dayanarie <span>Abundante</span></h1>
+        <p class="subtitle">Trading Journal & Tracker</p>
+      </div>
+      <div class="header-right">
+        <div class="motivation-box" id="motivationBox"></div>
+      </div>
+    </header>
+
+    <!-- Accounts Bar -->
+    <section class="accounts-bar">
+      <div class="accounts-list" id="accountsList"></div>
+      <button class="btn btn-add-account" id="btnAddAccount">+ Nueva Cuenta</button>
+    </section>
+
+    <!-- Stats Overview -->
+    <section class="stats-overview" id="statsOverview"></section>
+
+    <!-- Calendar Navigation -->
+    <div class="calendar-nav">
+      <button class="nav-btn" id="prevMonth">&larr;</button>
+      <h2 class="month-title" id="monthTitle"></h2>
+      <button class="nav-btn" id="nextMonth">&rarr;</button>
+    </div>
+
+    <!-- Calendar -->
+    <div class="calendar-container">
+      <div class="calendar-header">
+        <div class="day-name">Lun</div>
+        <div class="day-name">Mar</div>
+        <div class="day-name">Mie</div>
+        <div class="day-name">Jue</div>
+        <div class="day-name">Vie</div>
+        <div class="day-name weekend-name">Sab</div>
+        <div class="day-name weekend-name">Dom</div>
+      </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+    </div>
+
+    <!-- Monthly Report -->
+    <section class="monthly-report" id="monthlyReport"></section>
+
+    <!-- Withdrawals Section -->
+    <section class="withdrawals-section">
+      <div class="section-header">
+        <h3>Retiros</h3>
+        <button class="btn btn-withdrawal" id="btnAddWithdrawal">+ Registrar Retiro</button>
+      </div>
+      <div class="withdrawals-list" id="withdrawalsList"></div>
+    </section>
+
+    <!-- Year Overview -->
+    <section class="year-overview">
+      <h3>Resumen Anual</h3>
+      <div class="year-stats" id="yearStats"></div>
+    </section>
+  </div>
+
+  <!-- Modal: Day Entry -->
+  <div class="modal-overlay" id="dayModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Registro del Dia</h3>
+        <button class="modal-close" id="closeDayModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-account-select">
+          <label>Cuenta:</label>
+          <select id="modalAccountSelect"></select>
+        </div>
+        <div class="result-toggle">
+          <button class="toggle-btn win active" id="toggleWin">Ganancia</button>
+          <button class="toggle-btn loss" id="toggleLoss">Perdida</button>
+        </div>
+        <div class="amount-input-group">
+          <span class="currency">$</span>
+          <input type="number" id="amountInput" placeholder="0.00" step="0.01" min="0">
+        </div>
+        <textarea id="notesInput" placeholder="Notas del dia (opcional)..." rows="3"></textarea>
+        <button class="btn btn-save" id="saveDayEntry">Guardar</button>
+        <button class="btn btn-delete-entry" id="deleteDayEntry" style="display:none;">Eliminar Registro</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Account -->
+  <div class="modal-overlay" id="accountModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Nueva Cuenta de Trading</h3>
+        <button class="modal-close" id="closeAccountModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Nombre de la cuenta</label>
+          <input type="text" id="accountName" placeholder="Ej: Cuenta Principal">
+        </div>
+        <div class="form-group">
+          <label>Costo mensual ($)</label>
+          <input type="number" id="accountCost" value="50" step="0.01" min="0">
+        </div>
+        <div class="form-group">
+          <label>Comision de retiro (%)</label>
+          <input type="number" id="accountFee" value="10" step="0.1" min="0" max="100">
+        </div>
+        <div class="form-group">
+          <label>Fecha de inicio</label>
+          <input type="date" id="accountStartDate">
+        </div>
+        <button class="btn btn-save" id="saveAccount">Crear Cuenta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Withdrawal -->
+  <div class="modal-overlay" id="withdrawalModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Registrar Retiro</h3>
+        <button class="modal-close" id="closeWithdrawalModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Cuenta:</label>
+          <select id="withdrawalAccountSelect"></select>
+        </div>
+        <div class="form-group">
+          <label>Fecha del retiro</label>
+          <input type="date" id="withdrawalDate">
+        </div>
+        <div class="amount-input-group">
+          <span class="currency">$</span>
+          <input type="number" id="withdrawalAmount" placeholder="0.00" step="0.01" min="0">
+        </div>
+        <div class="withdrawal-calc" id="withdrawalCalc">
+          <p>Comision (10%): <span id="feeAmount">$0.00</span></p>
+          <p class="net-amount">Recibes: <span id="netAmount">$0.00</span></p>
+        </div>
+        <button class="btn btn-save" id="saveWithdrawal">Registrar Retiro</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
