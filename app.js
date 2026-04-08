@@ -36,18 +36,102 @@ let state = {
   startMonth: new Date().getMonth()
 };
 
-// ========== PERSISTENCE ==========
-function saveState() {
-  localStorage.setItem('10millones_state', JSON.stringify(state));
+// ========== FIREBASE ==========
+const firebaseConfig = {
+  apiKey: "AIzaSyAWTUvDy_UsNAWxKsKz0OgGqkA9mok-xjU",
+  authDomain: "panel-de-administracion-5578c.firebaseapp.com",
+  projectId: "panel-de-administracion-5578c",
+  storageBucket: "panel-de-administracion-5578c.firebasestorage.app",
+  messagingSenderId: "749010711047",
+  appId: "1:749010711047:web:5c15db153ac7751801f0a2"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let currentUserPin = null;
+let syncTimeout = null;
+
+function getUserDocRef() {
+  if (!currentUserPin) return null;
+  // Hash the PIN to use as document ID (simple hash for privacy)
+  const hash = btoa(currentUserPin).replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+  return db.collection('trading_users').doc(hash);
 }
 
-function loadState() {
+// ========== PERSISTENCE ==========
+function saveState() {
+  // Save locally always
+  localStorage.setItem('10millones_state', JSON.stringify(state));
+
+  // Debounce cloud sync (save to Firebase 1 sec after last change)
+  if (syncTimeout) clearTimeout(syncTimeout);
+  setSyncStatus('syncing');
+  syncTimeout = setTimeout(() => syncToCloud(), 1000);
+}
+
+async function syncToCloud() {
+  const ref = getUserDocRef();
+  if (!ref) return;
+  try {
+    const dataToSync = {
+      accounts: state.accounts,
+      entries: state.entries,
+      withdrawals: state.withdrawals,
+      updatedAt: new Date().toISOString()
+    };
+    await ref.set(dataToSync, { merge: true });
+    setSyncStatus('synced');
+  } catch (err) {
+    console.error('Sync error:', err);
+    setSyncStatus('error');
+  }
+}
+
+async function loadFromCloud() {
+  const ref = getUserDocRef();
+  if (!ref) return false;
+  try {
+    const doc = await ref.get();
+    if (doc.exists) {
+      const data = doc.data();
+      state.accounts = data.accounts || [];
+      state.entries = data.entries || {};
+      state.withdrawals = data.withdrawals || [];
+      // Save to local too
+      localStorage.setItem('10millones_state', JSON.stringify(state));
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Load from cloud error:', err);
+    return false;
+  }
+}
+
+function setSyncStatus(status) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.classList.remove('syncing');
+  if (status === 'syncing') {
+    el.textContent = 'Guardando...';
+    el.classList.add('syncing');
+  } else if (status === 'synced') {
+    el.textContent = 'Sincronizado';
+  } else {
+    el.textContent = 'Error de sync';
+  }
+}
+
+function loadStateLocal() {
   const saved = localStorage.getItem('10millones_state');
   if (saved) {
     const parsed = JSON.parse(saved);
     state = { ...state, ...parsed };
   }
-  // Create default account if none exist
+}
+
+function ensureDefaultAccount() {
   if (state.accounts.length === 0) {
     state.accounts.push({
       id: generateId(),
@@ -55,7 +139,7 @@ function loadState() {
       monthlyCost: 50,
       withdrawalFee: 10,
       startDate: new Date().toISOString().split('T')[0],
-      color: '#6b5ce7'
+      color: '#c6a84b'
     });
     saveState();
   }
@@ -585,10 +669,64 @@ function renderAll() {
   populateAccountSelects();
 }
 
+// ========== LOGIN / AUTH ==========
+async function handleLogin() {
+  const pin = document.getElementById('pinInput').value.trim();
+  if (pin.length < 4) {
+    alert('El PIN debe tener al menos 4 digitos');
+    return;
+  }
+
+  currentUserPin = pin;
+  localStorage.setItem('da_pin', pin);
+
+  // Try loading from cloud first
+  const cloudLoaded = await loadFromCloud();
+  if (!cloudLoaded) {
+    // No cloud data — load local or start fresh
+    loadStateLocal();
+  }
+
+  ensureDefaultAccount();
+  showMainApp();
+}
+
+function showMainApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  renderAll();
+  setSyncStatus('synced');
+}
+
+function handleLogout() {
+  currentUserPin = null;
+  localStorage.removeItem('da_pin');
+  document.getElementById('mainApp').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('pinInput').value = '';
+}
+
 // ========== EVENT LISTENERS ==========
 document.addEventListener('DOMContentLoaded', () => {
-  loadState();
-  renderAll();
+  // Check if already logged in
+  const savedPin = localStorage.getItem('da_pin');
+  if (savedPin) {
+    currentUserPin = savedPin;
+    loadFromCloud().then(cloudLoaded => {
+      if (!cloudLoaded) loadStateLocal();
+      ensureDefaultAccount();
+      showMainApp();
+    });
+  }
+
+  // Login
+  document.getElementById('btnLogin').addEventListener('click', handleLogin);
+  document.getElementById('pinInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleLogin();
+  });
+
+  // Logout
+  document.getElementById('btnLogout').addEventListener('click', handleLogout);
 
   // Navigation
   document.getElementById('prevMonth').addEventListener('click', () => {

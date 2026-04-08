@@ -559,6 +559,117 @@ body {
   gap: 14px;
 }
 
+/* ========== LOGIN SCREEN ========== */
+.login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.login-screen.hidden {
+  display: none;
+}
+
+.login-card {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 48px 40px;
+  box-shadow: 0 8px 40px rgba(139,119,80,0.12);
+  border: 1px solid var(--border);
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+}
+
+.login-card .logo {
+  margin-bottom: 4px;
+}
+
+.login-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 32px;
+}
+
+.login-form .form-group {
+  text-align: left;
+}
+
+.login-form input {
+  text-align: center;
+  font-size: 1.5rem;
+  letter-spacing: 8px;
+  padding: 16px;
+}
+
+.login-hint {
+  font-size: 0.78rem;
+  color: var(--text-light);
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
+/* ========== SYNC BAR ========== */
+.sync-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.sync-status {
+  font-size: 0.75rem;
+  color: var(--win-text);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sync-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--win);
+  display: inline-block;
+}
+
+.sync-status.syncing {
+  color: var(--gold);
+}
+
+.sync-status.syncing::before {
+  background: var(--gold);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.btn-logout {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  color: var(--text-light);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+}
+
+.btn-logout:hover {
+  background: var(--loss-light);
+  color: var(--loss-text);
+  border-color: var(--loss);
+}
+
 /* ========== MODALS ========== */
 .modal-overlay {
   display: none;
