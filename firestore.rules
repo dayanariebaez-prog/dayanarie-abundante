@@ -4,5 +4,8 @@ service cloud.firestore {
     match /trading_users/{userId} {
       allow read, write: if true;
     }
+    match /luis_billonario_users/{userId} {
+      allow read, write: if true;
+    }
   }
 }

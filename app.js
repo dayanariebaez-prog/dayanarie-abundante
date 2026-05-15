@@ -1,6 +1,55 @@
 // ========== DAYANARIE ABUNDANTE - Trading Calendar ==========
 
-const TRADE_FEE = 1.48; // Fee por operacion (win o loss)
+const DEFAULT_TRADE_FEE = 1.48; // Fee default cuando la cuenta no especifica
+
+const CURRENCY_SYMBOLS = {
+  USD: '$', EUR: '€', GBP: '£', JPY: '¥',
+  MXN: 'MX$', CAD: 'C$', AUD: 'A$', CHF: 'CHF'
+};
+
+function getAccountTradeFee(accId) {
+  const acc = state.accounts.find(a => a.id === accId);
+  return acc && acc.tradeFee != null ? acc.tradeFee : DEFAULT_TRADE_FEE;
+}
+
+function getAccountCurrency(accId) {
+  const acc = state.accounts.find(a => a.id === accId);
+  return acc && acc.currency ? acc.currency : 'USD';
+}
+
+function getCurrencySymbol(currency) {
+  return CURRENCY_SYMBOLS[currency] || '$';
+}
+
+function getSelectedCurrencySymbol() {
+  if (state.selectedAccountId === 'all') {
+    // Use first account's currency, or USD
+    return state.accounts.length > 0
+      ? getCurrencySymbol(state.accounts[0].currency || 'USD')
+      : '$';
+  }
+  return getCurrencySymbol(getAccountCurrency(state.selectedAccountId));
+}
+
+// Returns true if the account is in challenge state for the given month/year
+function isAccountChallengeForMonth(acc, month, year) {
+  if (!acc) return false;
+  // Default: if no type set, assume challenge (old accounts)
+  const type = acc.type || 'challenge';
+  if (type === 'challenge') return true;
+  // Real account: only challenge if month is before transitionDate
+  if (!acc.transitionDate) return false;
+  const transition = new Date(acc.transitionDate);
+  const monthEnd = new Date(year, month + 1, 0);
+  return transition > monthEnd;
+}
+
+// Returns true if the one-time fee was paid in the given month/year
+function isOneTimeFeeForMonth(acc, month, year) {
+  if (!acc || !acc.transitionDate || !acc.oneTimeFee) return false;
+  const transition = new Date(acc.transitionDate);
+  return transition.getMonth() === month && transition.getFullYear() === year;
+}
 
 const MONTHS_ES = [
   'Enero','Febrero','Marzo','Abril','Mayo','Junio',
@@ -136,13 +185,28 @@ function ensureDefaultAccount() {
     state.accounts.push({
       id: generateId(),
       name: 'Cuenta Principal',
+      type: 'challenge',
+      currency: 'USD',
+      tradingHours: '',
+      tradeFee: 1.48,
       monthlyCost: 50,
+      oneTimeFee: 0,
+      transitionDate: '',
       withdrawalFee: 10,
       startDate: new Date().toISOString().split('T')[0],
       color: '#c6a84b'
     });
     saveState();
   }
+  // Migrate old accounts to have new fields (without losing data)
+  state.accounts.forEach(acc => {
+    if (!acc.type) acc.type = 'challenge';
+    if (!acc.currency) acc.currency = 'USD';
+    if (acc.tradeFee == null) acc.tradeFee = 1.48;
+    if (acc.tradingHours == null) acc.tradingHours = '';
+    if (acc.oneTimeFee == null) acc.oneTimeFee = 0;
+    if (acc.transitionDate == null) acc.transitionDate = '';
+  });
 }
 
 function generateId() {
@@ -171,9 +235,15 @@ function renderAccounts() {
   </div>`;
 
   state.accounts.forEach(acc => {
+    const type = acc.type || 'challenge';
+    const currentlyChallenge = isAccountChallengeForMonth(acc, state.currentMonth, state.currentYear);
+    const tag = currentlyChallenge ? 'Challenge' : 'Real';
+    const currency = acc.currency || 'USD';
     html += `<div class="account-chip ${state.selectedAccountId === acc.id ? 'active' : ''}" data-id="${acc.id}">
       <span class="chip-dot" style="background:${acc.color}"></span>
       ${acc.name}
+      <span class="acc-tag">${tag} • ${currency}</span>
+      <span class="btn-edit-account" data-edit="${acc.id}">&#9998;</span>
       ${state.accounts.length > 1 ? `<span class="delete-account" data-del="${acc.id}">&times;</span>` : ''}
     </div>`;
   });
@@ -184,9 +254,17 @@ function renderAccounts() {
   list.querySelectorAll('.account-chip').forEach(chip => {
     chip.addEventListener('click', (e) => {
       if (e.target.classList.contains('delete-account')) return;
+      if (e.target.classList.contains('btn-edit-account')) return;
       state.selectedAccountId = chip.dataset.id;
       saveState();
       renderAll();
+    });
+  });
+
+  list.querySelectorAll('.btn-edit-account').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAccountModal(btn.dataset.edit);
     });
   });
 
@@ -239,12 +317,16 @@ function renderCalendar() {
   }
 
   // Day cells
+  const sym = getSelectedCurrencySymbol();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(currentYear, currentMonth, d);
     const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const dayOfWeek = date.getDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
     const isToday = date.toDateString() === today.toDateString();
+    const isPast = date < todayStart;
 
     // Get entries for this day
     const dayEntries = getDayEntries(dateStr);
@@ -260,6 +342,9 @@ function renderCalendar() {
         return sum + (e.result === 'win' ? e.amount : -e.amount);
       }, 0);
       cellClass += totalAmount >= 0 ? ' win' : ' loss';
+    } else if (isPast) {
+      // Past weekday without entries = no-trade day
+      cellClass += ' no-trade';
     } else {
       cellClass += ' weekday';
     }
@@ -270,7 +355,7 @@ function renderCalendar() {
         return sum + (e.result === 'win' ? e.amount : -e.amount);
       }, 0);
       const sign = totalAmount >= 0 ? '+' : '';
-      amountHtml = `<div class="day-amount">${sign}$${Math.abs(totalAmount).toFixed(0)}</div>`;
+      amountHtml = `<div class="day-amount">${sign}${sym}${Math.abs(totalAmount).toFixed(0)}</div>`;
 
       if (dayEntries.length > 1 && state.selectedAccountId === 'all') {
         let dotsHtml = '<div class="day-multi-dot">';
@@ -337,6 +422,11 @@ function loadEntryForModal(accId, dateStr) {
   const key = `${accId}_${dateStr}`;
   const entry = state.entries[key];
 
+  // Update currency symbol in the day modal
+  const sym = getCurrencySymbol(getAccountCurrency(accId));
+  const currencySpan = document.querySelector('#dayModal .currency');
+  if (currencySpan) currencySpan.textContent = sym;
+
   if (entry) {
     currentEditResult = entry.result;
     document.getElementById('amountInput').value = entry.amount;
@@ -363,6 +453,7 @@ function updateToggleButtons() {
 function renderStats() {
   const { currentMonth, currentYear } = state;
   const monthEntries = getMonthEntries(currentMonth, currentYear);
+  const sym = getSelectedCurrencySymbol();
 
   let wins = 0, losses = 0, winAmount = 0, lossAmount = 0;
   monthEntries.forEach(e => {
@@ -372,32 +463,50 @@ function renderStats() {
 
   const net = winAmount - lossAmount;
   const totalDays = wins + losses;
-  const tradeFees = totalDays * TRADE_FEE;
+  const tradeFees = getTotalTradeFees(monthEntries);
   const winRate = totalDays > 0 ? ((wins / totalDays) * 100).toFixed(0) : 0;
 
-  // Monthly costs for active accounts
   const monthlyCost = getActiveMonthlyCost(currentMonth, currentYear);
-  const netAfterCosts = net - monthlyCost - tradeFees;
+  const oneTimeFees = getOneTimeFeesForMonth(currentMonth, currentYear);
+  const netAfterCosts = net - monthlyCost - tradeFees - oneTimeFees;
 
   const netClass = netAfterCosts >= 0 ? 'positive' : 'negative';
   const netSign = netAfterCosts >= 0 ? '+' : '-';
 
-  document.getElementById('statsOverview').innerHTML = `
+  let cards = `
     <div class="stat-card">
       <div class="stat-label">Ganancias del Mes</div>
-      <div class="stat-value positive">+$${winAmount.toFixed(2)}</div>
+      <div class="stat-value positive">+${sym}${winAmount.toFixed(2)}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Perdidas del Mes</div>
-      <div class="stat-value negative">-$${lossAmount.toFixed(2)}</div>
+      <div class="stat-value negative">-${sym}${lossAmount.toFixed(2)}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Fees Operacion ($${TRADE_FEE} x${totalDays})</div>
-      <div class="stat-value negative">-$${tradeFees.toFixed(2)}</div>
-    </div>
+      <div class="stat-label">Fees Operacion (${totalDays} trades)</div>
+      <div class="stat-value negative">-${sym}${tradeFees.toFixed(2)}</div>
+    </div>`;
+
+  if (monthlyCost > 0) {
+    cards += `
+    <div class="stat-card">
+      <div class="stat-label">Costo Challenge</div>
+      <div class="stat-value negative">-${sym}${monthlyCost.toFixed(2)}</div>
+    </div>`;
+  }
+
+  if (oneTimeFees > 0) {
+    cards += `
+    <div class="stat-card">
+      <div class="stat-label">One-Time Fee (Real)</div>
+      <div class="stat-value negative">-${sym}${oneTimeFees.toFixed(2)}</div>
+    </div>`;
+  }
+
+  cards += `
     <div class="stat-card">
       <div class="stat-label">Neto Real</div>
-      <div class="stat-value ${netClass}">${netSign}$${Math.abs(netAfterCosts).toFixed(2)}</div>
+      <div class="stat-value ${netClass}">${netSign}${sym}${Math.abs(netAfterCosts).toFixed(2)}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Win Rate</div>
@@ -408,6 +517,8 @@ function renderStats() {
       <div class="stat-value">${totalDays}</div>
     </div>
   `;
+
+  document.getElementById('statsOverview').innerHTML = cards;
 }
 
 function getMonthEntries(month, year) {
@@ -434,16 +545,48 @@ function getActiveMonthlyCost(month, year) {
     : state.accounts.filter(a => a.id === state.selectedAccountId);
 
   return accountsToCheck.reduce((sum, acc) => {
+    // Only charge if account is challenge for this month
+    if (!isAccountChallengeForMonth(acc, month, year)) return sum;
     const start = new Date(acc.startDate);
     const monthStart = new Date(year, month, 1);
-    return sum + (start <= monthStart || (start.getMonth() === month && start.getFullYear() === year) ? acc.monthlyCost : 0);
+    const monthEnd = new Date(year, month + 1, 0);
+    const isActive = start <= monthEnd;
+    return sum + (isActive ? (acc.monthlyCost || 0) : 0);
   }, 0);
+}
+
+function getOneTimeFeesForMonth(month, year) {
+  const accountsToCheck = state.selectedAccountId === 'all'
+    ? state.accounts
+    : state.accounts.filter(a => a.id === state.selectedAccountId);
+
+  return accountsToCheck.reduce((sum, acc) => {
+    return sum + (isOneTimeFeeForMonth(acc, month, year) ? (acc.oneTimeFee || 0) : 0);
+  }, 0);
+}
+
+function getOneTimeFeesForYear(year) {
+  const accountsToCheck = state.selectedAccountId === 'all'
+    ? state.accounts
+    : state.accounts.filter(a => a.id === state.selectedAccountId);
+
+  return accountsToCheck.reduce((sum, acc) => {
+    if (!acc.transitionDate || !acc.oneTimeFee) return sum;
+    const t = new Date(acc.transitionDate);
+    return sum + (t.getFullYear() === year ? acc.oneTimeFee : 0);
+  }, 0);
+}
+
+// Sum trade fees per entry using each entry's account fee
+function getTotalTradeFees(entries) {
+  return entries.reduce((sum, e) => sum + getAccountTradeFee(e.accountId), 0);
 }
 
 // ========== MONTHLY REPORT ==========
 function renderMonthlyReport() {
   const { currentMonth, currentYear } = state;
   const monthEntries = getMonthEntries(currentMonth, currentYear);
+  const sym = getSelectedCurrencySymbol();
 
   let wins = 0, losses = 0, winAmount = 0, lossAmount = 0;
   let bestDay = 0, worstDay = 0;
@@ -461,21 +604,19 @@ function renderMonthlyReport() {
   });
 
   const monthlyCost = getActiveMonthlyCost(currentMonth, currentYear);
+  const oneTimeFees = getOneTimeFeesForMonth(currentMonth, currentYear);
   const monthWithdrawals = getMonthWithdrawals(currentMonth, currentYear);
   const totalWithdrawn = monthWithdrawals.reduce((s, w) => s + w.grossAmount, 0);
   const totalFees = monthWithdrawals.reduce((s, w) => s + w.fee, 0);
-  const netReceived = monthWithdrawals.reduce((s, w) => s + w.netAmount, 0);
 
   const net = winAmount - lossAmount;
   const totalDays = wins + losses;
-  const tradeFees = totalDays * TRADE_FEE;
-  const profit = net - monthlyCost - tradeFees;
+  const tradeFees = getTotalTradeFees(monthEntries);
+  const profit = net - monthlyCost - tradeFees - oneTimeFees;
   const avgWin = wins > 0 ? winAmount / wins : 0;
   const avgLoss = losses > 0 ? lossAmount / losses : 0;
 
-  document.getElementById('monthlyReport').innerHTML = `
-    <h3>Reporte de ${MONTHS_ES[currentMonth]} ${currentYear}</h3>
-    <div class="report-grid">
+  let items = `
       <div class="report-item">
         <div class="label">Dias Ganados</div>
         <div class="value" style="color:var(--win-text)">${wins}</div>
@@ -486,51 +627,68 @@ function renderMonthlyReport() {
       </div>
       <div class="report-item">
         <div class="label">Total Ganancias</div>
-        <div class="value" style="color:var(--win-text)">+$${winAmount.toFixed(2)}</div>
+        <div class="value" style="color:var(--win-text)">+${sym}${winAmount.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Total Perdidas</div>
-        <div class="value" style="color:var(--loss-text)">-$${lossAmount.toFixed(2)}</div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${lossAmount.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Mejor Dia</div>
-        <div class="value" style="color:var(--win-text)">+$${bestDay.toFixed(2)}</div>
+        <div class="value" style="color:var(--win-text)">+${sym}${bestDay.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Peor Dia</div>
-        <div class="value" style="color:var(--loss-text)">-$${worstDay.toFixed(2)}</div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${worstDay.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Promedio Ganancia</div>
-        <div class="value">$${avgWin.toFixed(2)}</div>
+        <div class="value">${sym}${avgWin.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Promedio Perdida</div>
-        <div class="value">$${avgLoss.toFixed(2)}</div>
+        <div class="value">${sym}${avgLoss.toFixed(2)}</div>
       </div>
       <div class="report-item">
-        <div class="label">Fees Operacion ($${TRADE_FEE} x${totalDays})</div>
-        <div class="value" style="color:var(--loss-text)">-$${tradeFees.toFixed(2)}</div>
-      </div>
+        <div class="label">Fees Operacion (${totalDays} trades)</div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${tradeFees.toFixed(2)}</div>
+      </div>`;
+
+  if (monthlyCost > 0) {
+    items += `
       <div class="report-item">
-        <div class="label">Costos Mensuales</div>
-        <div class="value" style="color:var(--loss-text)">-$${monthlyCost.toFixed(2)}</div>
-      </div>
+        <div class="label">Costo Challenge</div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${monthlyCost.toFixed(2)}</div>
+      </div>`;
+  }
+
+  if (oneTimeFees > 0) {
+    items += `
+      <div class="report-item">
+        <div class="label">One-Time Fee (Real)</div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${oneTimeFees.toFixed(2)}</div>
+      </div>`;
+  }
+
+  items += `
       <div class="report-item">
         <div class="label">Profit Neto Real</div>
         <div class="value" style="color:${profit >= 0 ? 'var(--win-text)' : 'var(--loss-text)'}">
-          ${profit >= 0 ? '+' : '-'}$${Math.abs(profit).toFixed(2)}
+          ${profit >= 0 ? '+' : '-'}${sym}${Math.abs(profit).toFixed(2)}
         </div>
       </div>
       <div class="report-item">
         <div class="label">Retirado (Bruto)</div>
-        <div class="value">$${totalWithdrawn.toFixed(2)}</div>
+        <div class="value">${sym}${totalWithdrawn.toFixed(2)}</div>
       </div>
       <div class="report-item">
         <div class="label">Comisiones Retiro</div>
-        <div class="value" style="color:var(--loss-text)">-$${totalFees.toFixed(2)}</div>
-      </div>
-    </div>
+        <div class="value" style="color:var(--loss-text)">-${sym}${totalFees.toFixed(2)}</div>
+      </div>`;
+
+  document.getElementById('monthlyReport').innerHTML = `
+    <h3>Reporte de ${MONTHS_ES[currentMonth]} ${currentYear}</h3>
+    <div class="report-grid">${items}</div>
   `;
 }
 
@@ -560,6 +718,7 @@ function renderWithdrawals() {
   list.innerHTML = monthWithdrawals.map(w => {
     const acc = state.accounts.find(a => a.id === w.accountId);
     const accName = acc ? acc.name : 'Cuenta eliminada';
+    const sym = acc ? getCurrencySymbol(acc.currency || 'USD') : '$';
     const [y, m, d] = w.date.split('-');
     return `<div class="withdrawal-item">
       <div class="w-info">
@@ -567,8 +726,8 @@ function renderWithdrawals() {
         <span class="w-account">${accName}</span>
       </div>
       <div class="w-amounts">
-        <div class="w-gross">$${w.grossAmount.toFixed(2)}</div>
-        <div class="w-fee">Comision: -$${w.fee.toFixed(2)} | Neto: $${w.netAmount.toFixed(2)}</div>
+        <div class="w-gross">${sym}${w.grossAmount.toFixed(2)}</div>
+        <div class="w-fee">Comision: -${sym}${w.fee.toFixed(2)} | Neto: ${sym}${w.netAmount.toFixed(2)}</div>
       </div>
       <span class="w-delete" data-wid="${w.id}">&times;</span>
     </div>`;
@@ -586,17 +745,23 @@ function renderWithdrawals() {
 // ========== YEAR OVERVIEW ==========
 function renderYearOverview() {
   const year = state.currentYear;
-  let totalWin = 0, totalLoss = 0, totalCost = 0, totalWithdrawnFees = 0, totalNetReceived = 0;
-  let totalWins = 0, totalLosses = 0;
+  const sym = getSelectedCurrencySymbol();
+  let totalWin = 0, totalLoss = 0, totalCost = 0;
+  let totalWins = 0, totalLosses = 0, totalTradeFees = 0;
+  let allEntries = [];
 
   for (let m = 0; m < 12; m++) {
     const entries = getMonthEntries(m, year);
+    allEntries = allEntries.concat(entries);
     entries.forEach(e => {
       if (e.result === 'win') { totalWins++; totalWin += e.amount; }
       else { totalLosses++; totalLoss += e.amount; }
     });
     totalCost += getActiveMonthlyCost(m, year);
   }
+  totalTradeFees = getTotalTradeFees(allEntries);
+
+  const totalOneTimeFees = getOneTimeFeesForYear(year);
 
   const yearWithdrawals = state.withdrawals.filter(w => w.date.startsWith(String(year)));
   const accountsToCheck = state.selectedAccountId === 'all'
@@ -604,57 +769,71 @@ function renderYearOverview() {
     : state.accounts.filter(a => a.id === state.selectedAccountId);
 
   const filteredWithdrawals = yearWithdrawals.filter(w => accountsToCheck.some(a => a.id === w.accountId));
-  totalWithdrawnFees = filteredWithdrawals.reduce((s, w) => s + w.fee, 0);
-  totalNetReceived = filteredWithdrawals.reduce((s, w) => s + w.netAmount, 0);
+  const totalWithdrawnFees = filteredWithdrawals.reduce((s, w) => s + w.fee, 0);
+  const totalNetReceived = filteredWithdrawals.reduce((s, w) => s + w.netAmount, 0);
 
   const netTrading = totalWin - totalLoss;
   const totalDays = totalWins + totalLosses;
-  const totalTradeFees = totalDays * TRADE_FEE;
-  const netAfterAll = netTrading - totalCost - totalWithdrawnFees - totalTradeFees;
+  const netAfterAll = netTrading - totalCost - totalWithdrawnFees - totalTradeFees - totalOneTimeFees;
   const winRate = totalDays > 0 ? ((totalWins / totalDays) * 100).toFixed(0) : 0;
 
-  document.getElementById('yearStats').innerHTML = `
+  let items = `
     <div class="report-item">
       <div class="label">Ganancias Totales</div>
-      <div class="value" style="color:var(--win-text)">+$${totalWin.toFixed(2)}</div>
+      <div class="value" style="color:var(--win-text)">+${sym}${totalWin.toFixed(2)}</div>
     </div>
     <div class="report-item">
       <div class="label">Perdidas Totales</div>
-      <div class="value" style="color:var(--loss-text)">-$${totalLoss.toFixed(2)}</div>
+      <div class="value" style="color:var(--loss-text)">-${sym}${totalLoss.toFixed(2)}</div>
     </div>
     <div class="report-item">
       <div class="label">Net Trading</div>
       <div class="value" style="color:${netTrading >= 0 ? 'var(--win-text)' : 'var(--loss-text)'}">
-        ${netTrading >= 0 ? '+' : '-'}$${Math.abs(netTrading).toFixed(2)}
+        ${netTrading >= 0 ? '+' : '-'}${sym}${Math.abs(netTrading).toFixed(2)}
       </div>
     </div>
     <div class="report-item">
-      <div class="label">Fees Operacion ($${TRADE_FEE} x${totalDays})</div>
-      <div class="value" style="color:var(--loss-text)">-$${totalTradeFees.toFixed(2)}</div>
-    </div>
+      <div class="label">Fees Operacion (${totalDays} trades)</div>
+      <div class="value" style="color:var(--loss-text)">-${sym}${totalTradeFees.toFixed(2)}</div>
+    </div>`;
+
+  if (totalCost > 0) {
+    items += `
     <div class="report-item">
-      <div class="label">Costos Anuales</div>
-      <div class="value" style="color:var(--loss-text)">-$${totalCost.toFixed(2)}</div>
-    </div>
+      <div class="label">Costos Challenge</div>
+      <div class="value" style="color:var(--loss-text)">-${sym}${totalCost.toFixed(2)}</div>
+    </div>`;
+  }
+
+  if (totalOneTimeFees > 0) {
+    items += `
+    <div class="report-item">
+      <div class="label">One-Time Fees (Real)</div>
+      <div class="value" style="color:var(--loss-text)">-${sym}${totalOneTimeFees.toFixed(2)}</div>
+    </div>`;
+  }
+
+  items += `
     <div class="report-item">
       <div class="label">Comisiones Retiro</div>
-      <div class="value" style="color:var(--loss-text)">-$${totalWithdrawnFees.toFixed(2)}</div>
+      <div class="value" style="color:var(--loss-text)">-${sym}${totalWithdrawnFees.toFixed(2)}</div>
     </div>
     <div class="report-item">
       <div class="label">Neto Recibido (Retiros)</div>
-      <div class="value">$${totalNetReceived.toFixed(2)}</div>
+      <div class="value">${sym}${totalNetReceived.toFixed(2)}</div>
     </div>
     <div class="report-item">
       <div class="label">Profit Final Real</div>
       <div class="value" style="color:${netAfterAll >= 0 ? 'var(--win-text)' : 'var(--loss-text)'}">
-        ${netAfterAll >= 0 ? '+' : '-'}$${Math.abs(netAfterAll).toFixed(2)}
+        ${netAfterAll >= 0 ? '+' : '-'}${sym}${Math.abs(netAfterAll).toFixed(2)}
       </div>
     </div>
     <div class="report-item">
       <div class="label">Win Rate Anual</div>
       <div class="value">${winRate}% (${totalDays} dias)</div>
-    </div>
-  `;
+    </div>`;
+
+  document.getElementById('yearStats').innerHTML = items;
 }
 
 // ========== RENDER ALL ==========
@@ -704,6 +883,123 @@ function handleLogout() {
   document.getElementById('mainApp').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('pinInput').value = '';
+}
+
+// ========== ACCOUNT MODAL ==========
+let editingAccountId = null;
+const ACCOUNT_COLORS = ['#c6a84b', '#e74c8b', '#4cc9f0', '#f4a261', '#06d6a0', '#8338ec', '#ff6b6b'];
+
+function setAccountType(type) {
+  const challengeBtn = document.getElementById('toggleChallenge');
+  const realBtn = document.getElementById('toggleReal');
+  const monthlyGroup = document.getElementById('monthlyCostGroup');
+  const oneTimeGroup = document.getElementById('oneTimeFeeGroup');
+  const transitionGroup = document.getElementById('transitionDateGroup');
+
+  if (type === 'challenge') {
+    challengeBtn.classList.add('active');
+    realBtn.classList.remove('active');
+    monthlyGroup.style.display = 'block';
+    oneTimeGroup.style.display = 'none';
+    transitionGroup.style.display = 'none';
+  } else {
+    challengeBtn.classList.remove('active');
+    realBtn.classList.add('active');
+    monthlyGroup.style.display = 'none';
+    oneTimeGroup.style.display = 'block';
+    transitionGroup.style.display = 'block';
+  }
+}
+
+function openAccountModal(accId) {
+  editingAccountId = accId;
+  const title = document.getElementById('accountModalTitle');
+
+  if (accId) {
+    const acc = state.accounts.find(a => a.id === accId);
+    if (!acc) return;
+    title.textContent = 'Editar Cuenta';
+    document.getElementById('accountName').value = acc.name || '';
+    document.getElementById('accountCurrency').value = acc.currency || 'USD';
+    document.getElementById('accountHours').value = acc.tradingHours || '';
+    document.getElementById('accountTradeFee').value = acc.tradeFee != null ? acc.tradeFee : 1.48;
+    document.getElementById('accountCost').value = acc.monthlyCost != null ? acc.monthlyCost : 50;
+    document.getElementById('accountOneTimeFee').value = acc.oneTimeFee || 0;
+    document.getElementById('accountTransitionDate').value = acc.transitionDate || '';
+    document.getElementById('accountFee').value = acc.withdrawalFee != null ? acc.withdrawalFee : 10;
+    document.getElementById('accountStartDate').value = acc.startDate || new Date().toISOString().split('T')[0];
+    setAccountType(acc.type || 'challenge');
+  } else {
+    title.textContent = 'Nueva Cuenta de Trading';
+    document.getElementById('accountName').value = '';
+    document.getElementById('accountCurrency').value = 'USD';
+    document.getElementById('accountHours').value = '';
+    document.getElementById('accountTradeFee').value = '1.48';
+    document.getElementById('accountCost').value = '50';
+    document.getElementById('accountOneTimeFee').value = '0';
+    document.getElementById('accountTransitionDate').value = '';
+    document.getElementById('accountFee').value = '10';
+    document.getElementById('accountStartDate').value = new Date().toISOString().split('T')[0];
+    setAccountType('challenge');
+  }
+
+  document.getElementById('accountModal').classList.add('show');
+}
+
+function saveAccountFromModal() {
+  const name = document.getElementById('accountName').value.trim();
+  const currency = document.getElementById('accountCurrency').value;
+  const tradingHours = document.getElementById('accountHours').value.trim();
+  const tradeFee = parseFloat(document.getElementById('accountTradeFee').value);
+  const cost = parseFloat(document.getElementById('accountCost').value);
+  const oneTimeFee = parseFloat(document.getElementById('accountOneTimeFee').value) || 0;
+  const transitionDate = document.getElementById('accountTransitionDate').value;
+  const fee = parseFloat(document.getElementById('accountFee').value);
+  const startDate = document.getElementById('accountStartDate').value;
+  const isReal = document.getElementById('toggleReal').classList.contains('active');
+  const type = isReal ? 'real' : 'challenge';
+
+  if (!name) { alert('Ingresa un nombre para la cuenta'); return; }
+  if (isNaN(tradeFee) || tradeFee < 0) { alert('Fee por operacion invalido'); return; }
+  if (!isReal && (isNaN(cost) || cost < 0)) { alert('Costo mensual invalido'); return; }
+  if (isReal && !transitionDate) { alert('Selecciona la fecha que paso a real'); return; }
+  if (isNaN(fee) || fee < 0 || fee > 100) { alert('Comision invalida'); return; }
+  if (!startDate) { alert('Selecciona fecha de inicio'); return; }
+
+  if (editingAccountId) {
+    const acc = state.accounts.find(a => a.id === editingAccountId);
+    if (acc) {
+      acc.name = name;
+      acc.type = type;
+      acc.currency = currency;
+      acc.tradingHours = tradingHours;
+      acc.tradeFee = tradeFee;
+      acc.monthlyCost = isReal ? (acc.monthlyCost || 0) : cost;
+      acc.oneTimeFee = isReal ? oneTimeFee : 0;
+      acc.transitionDate = isReal ? transitionDate : '';
+      acc.withdrawalFee = fee;
+      acc.startDate = startDate;
+    }
+  } else {
+    state.accounts.push({
+      id: generateId(),
+      name,
+      type,
+      currency,
+      tradingHours,
+      tradeFee,
+      monthlyCost: isReal ? 0 : cost,
+      oneTimeFee: isReal ? oneTimeFee : 0,
+      transitionDate: isReal ? transitionDate : '',
+      withdrawalFee: fee,
+      startDate,
+      color: ACCOUNT_COLORS[state.accounts.length % ACCOUNT_COLORS.length]
+    });
+  }
+
+  saveState();
+  document.getElementById('accountModal').classList.remove('show');
+  renderAll();
 }
 
 // ========== EVENT LISTENERS ==========
@@ -803,11 +1099,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Account Modal
   document.getElementById('btnAddAccount').addEventListener('click', () => {
-    document.getElementById('accountName').value = '';
-    document.getElementById('accountCost').value = '50';
-    document.getElementById('accountFee').value = '10';
-    document.getElementById('accountStartDate').value = new Date().toISOString().split('T')[0];
-    document.getElementById('accountModal').classList.add('show');
+    openAccountModal(null);
   });
 
   document.getElementById('closeAccountModal').addEventListener('click', () => {
@@ -820,31 +1112,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  const accountColors = ['#e74c8b', '#4cc9f0', '#f4a261', '#06d6a0', '#8338ec', '#ff6b6b'];
+  document.getElementById('toggleChallenge').addEventListener('click', () => {
+    setAccountType('challenge');
+  });
+
+  document.getElementById('toggleReal').addEventListener('click', () => {
+    setAccountType('real');
+  });
 
   document.getElementById('saveAccount').addEventListener('click', () => {
-    const name = document.getElementById('accountName').value.trim();
-    const cost = parseFloat(document.getElementById('accountCost').value);
-    const fee = parseFloat(document.getElementById('accountFee').value);
-    const startDate = document.getElementById('accountStartDate').value;
-
-    if (!name) { alert('Ingresa un nombre para la cuenta'); return; }
-    if (isNaN(cost) || cost < 0) { alert('Costo mensual invalido'); return; }
-    if (isNaN(fee) || fee < 0 || fee > 100) { alert('Comision invalida'); return; }
-    if (!startDate) { alert('Selecciona fecha de inicio'); return; }
-
-    state.accounts.push({
-      id: generateId(),
-      name,
-      monthlyCost: cost,
-      withdrawalFee: fee,
-      startDate,
-      color: accountColors[state.accounts.length % accountColors.length]
-    });
-
-    saveState();
-    document.getElementById('accountModal').classList.remove('show');
-    renderAll();
+    saveAccountFromModal();
   });
 
   // Withdrawal Modal
@@ -904,7 +1181,18 @@ function updateWithdrawalCalc() {
   const feePercent = acc ? acc.withdrawalFee : 10;
   const fee = amount * (feePercent / 100);
   const net = amount - fee;
+  const sym = acc ? getCurrencySymbol(acc.currency || 'USD') : '$';
 
-  document.getElementById('feeAmount').textContent = `$${fee.toFixed(2)}`;
-  document.getElementById('netAmount').textContent = `$${net.toFixed(2)}`;
+  // Update currency symbol in withdrawal modal
+  const wCurrency = document.querySelector('#withdrawalModal .currency');
+  if (wCurrency) wCurrency.textContent = sym;
+
+  // Update fee percent label
+  const calcEl = document.getElementById('withdrawalCalc');
+  if (calcEl) {
+    const feeText = calcEl.querySelector('p:first-child');
+    if (feeText) feeText.innerHTML = `Comision (${feePercent}%): <span id="feeAmount">${sym}${fee.toFixed(2)}</span>`;
+    const netText = calcEl.querySelector('.net-amount');
+    if (netText) netText.innerHTML = `Recibes: <span id="netAmount">${sym}${net.toFixed(2)}</span>`;
+  }
 }

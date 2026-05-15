@@ -775,6 +775,54 @@ body {
   border-color: var(--loss);
 }
 
+/* ========== ACCOUNT EXTRAS ========== */
+.account-chip .acc-tag {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: rgba(0,0,0,0.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+
+.account-chip.active .acc-tag {
+  background: rgba(255,255,255,0.25);
+}
+
+.btn-edit-account {
+  margin-left: 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 0.85rem;
+}
+
+.btn-edit-account:hover {
+  opacity: 1;
+}
+
+.day-cell.no-trade {
+  background: #efe9e0;
+  opacity: 0.55;
+}
+
+.day-cell.no-trade .day-number {
+  color: #b0a594;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.modal-wide {
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
 /* ========== MODALS ========== */
 .modal-overlay {
   display: none;
